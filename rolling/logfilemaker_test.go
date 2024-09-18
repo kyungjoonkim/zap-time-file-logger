@@ -6,6 +6,7 @@ import (
 	"go.uber.org/zap"
 	"go.uber.org/zap/zapcore"
 	"os"
+	"regexp"
 	"strings"
 	"testing"
 	"time"
@@ -74,8 +75,20 @@ func TestCutPrefix(t *testing.T) {
 }
 
 func TestTimeDuration(t *testing.T) {
-	dir, name, currentTime := fileLogger.parseFileName("/tmp/app-err-2024-09-16.log")
-	fmt.Printf("path : %s, name : %s, time : %s\n", dir, name, currentTime.Format(time.DateOnly))
+	totalFileName := "/tmp/app-err-2024-09-16-320.log"
+	pattern := `-\d+\.log$`
+	r := regexp.MustCompile(pattern)
+
+	str, _ := strings.CutPrefix(totalFileName, "/tmp/app-err-")
+
+	matches := r.FindStringSubmatch(str)
+
+	if len(matches) > 0 {
+		trimmedFilename := r.ReplaceAllString(str, "")
+		fmt.Printf("잘라낸 파일명: %s\n", trimmedFilename)
+	} else {
+		fmt.Println("패턴이 파일명에 존재하지 않음")
+	}
 
 }
 
@@ -83,8 +96,9 @@ func TestLog(t *testing.T) {
 	logger := createLogger()
 	defer logger.Sync()
 	sugar := logger.Sugar()
+	//sugar.Infof("Hello from Zap!: %s", time.Now().Format("2006-01-02 15:04:05"))
 
-	processEndTime := time.Now().Add(10 * time.Millisecond)
+	processEndTime := time.Now().Add(30 * time.Second)
 
 	goroutineLimit := make(chan struct{}, 10) // 최대 100개의 고루틴만 동시에 실행
 	for processEndTime.After(time.Now()) {
@@ -117,9 +131,9 @@ func createLogger() *zap.Logger {
 func newCoreFile() zapcore.Core {
 	//file1, _ := os.OpenFile("example.txt", os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
 	file := zapcore.AddSync(&FileTimeLogger{
-		PrefixFileName: "log/app-err-",
-		TimeFormat:     "2006-01-02 15:04:05",
-		FilePeriod:     10 * time.Second,
+		PrefixFileName: "log/p2k-app-err-",
+		TimeFormat:     time.DateTime,
+		FilePeriod:     5 * time.Second,
 	})
 
 	//file := zapcore.AddSync(&lumberjack.Logger{
