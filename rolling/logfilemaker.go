@@ -9,6 +9,7 @@ import (
 	"time"
 )
 
+// TimeFileLogger is a logger that writes to a file. It writes to the current logfile.
 type TimeFileLogger struct {
 	PrefixFileName     string        // PrefixFileName is the prefix of the log file name. e.g. : tmp/app-err-
 	TimeFormat         string        // TimeFormat is the time format for the log file name. e.g., 2006-01-02. Patterns defined in the time package should be used.
