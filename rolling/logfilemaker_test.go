@@ -6,29 +6,23 @@ import (
 	"go.uber.org/zap"
 	"go.uber.org/zap/zapcore"
 	"os"
-	"regexp"
 	"strings"
 	"testing"
 	"time"
 )
 
-var fileLogger = &FileTimeLogger{
-	PrefixFileName: "/tmp/app-err-",
-	TimeFormat:     "2006-01-02",
-	FilePeriod:     24 * time.Hour,
+var fileLogger = &TimeFileLogger{
+	PrefixFileName:     "/tmp/app-err-",
+	TimeFormat:         "2006-01-02",
+	LogRetentionPeriod: 24 * time.Hour,
 }
 
 func TestSomething(t *testing.T) {
 	assert.True(t, true, "True is true!")
 }
 
-func TestFileName(t *testing.T) {
-	assert.Equal(t, fileLogger.PrefixFileName+time.Now().Format(fileLogger.TimeFormat)+Ext,
-		fileLogger.toBeFileName())
-}
-
 func TestMakeFile(t *testing.T) {
-	file := zapcore.AddSync(&FileTimeLogger{
+	file := zapcore.AddSync(&TimeFileLogger{
 		PrefixFileName: "app-err-",
 		TimeFormat:     time.TimeOnly,
 	})
@@ -41,19 +35,19 @@ func TestMakeFile(t *testing.T) {
 }
 
 func TestTimeCheck(t *testing.T) {
-	old := time.Now().Add(-fileLogger.FilePeriod)
+	old := time.Now().Add(-fileLogger.LogRetentionPeriod)
 	fmt.Println(old.Format(fileLogger.TimeFormat))
 
 	//assert.Equal(t, time.DateOnly, fileLogger.timeFormat())
 }
 
 func TestCutPrefix(t *testing.T) {
-	after, found := strings.CutPrefix("/tmp/app-err-2024-09-16.log", fileLogger.prefixFimeName())
+	after, found := strings.CutPrefix("/tmp/app-err-2024-09-16.log", fileLogger.prefixFileName())
 	if !found {
 		fmt.Println(after)
 		return
 	}
-	after, found = strings.CutSuffix(after, Ext)
+	after, found = strings.CutSuffix(after, ext)
 	if !found {
 		fmt.Println(after)
 		return
@@ -75,19 +69,17 @@ func TestCutPrefix(t *testing.T) {
 }
 
 func TestTimeDuration(t *testing.T) {
-	totalFileName := "/tmp/app-err-2024-09-16-320.log"
-	pattern := `-\d+\.log$`
-	r := regexp.MustCompile(pattern)
+	logger := &TimeFileLogger{
+		PrefixFileName:     "log/app-err-",
+		TimeFormat:         "2006-01-02",
+		LogRetentionPeriod: 24 * time.Hour,
+	}
 
-	str, _ := strings.CutPrefix(totalFileName, "/tmp/app-err-")
+	_ = logger.updateLogFileInfo(InitFile, time.Now())
 
-	matches := r.FindStringSubmatch(str)
-
-	if len(matches) > 0 {
-		trimmedFilename := r.ReplaceAllString(str, "")
-		fmt.Printf("잘라낸 파일명: %s\n", trimmedFilename)
-	} else {
-		fmt.Println("패턴이 파일명에 존재하지 않음")
+	names := logger.removeFileNames()
+	for _, name := range names {
+		fmt.Println(name)
 	}
 
 }
@@ -130,23 +122,15 @@ func createLogger() *zap.Logger {
 
 func newCoreFile() zapcore.Core {
 	//file1, _ := os.OpenFile("example.txt", os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
-	file := zapcore.AddSync(&FileTimeLogger{
-		PrefixFileName: "log/p2k-app-err-",
-		TimeFormat:     time.DateTime,
-		FilePeriod:     5 * time.Second,
+	file := zapcore.AddSync(&TimeFileLogger{
+		PrefixFileName:     "log/app-err-",
+		TimeFormat:         time.DateTime,
+		LogRetentionPeriod: 5 * time.Second,
 	})
-
-	//file := zapcore.AddSync(&lumberjack.Logger{
-	//	Filename:   "example.log",
-	//	MaxSize:    1, // megabytes
-	//	MaxBackups: 0,
-	//})
 
 	productionCfg := zap.NewProductionEncoderConfig()
 	productionCfg.TimeKey = "timestamp"
 	productionCfg.EncodeTime = zapcore.ISO8601TimeEncoder
-
-	//&lumberjack.Logger{}
 
 	return zapcore.NewCore(zapcore.NewConsoleEncoder(productionCfg), file, zap.InfoLevel)
 }
