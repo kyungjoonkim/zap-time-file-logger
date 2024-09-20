@@ -2,10 +2,6 @@ package rolling
 
 import (
 	"fmt"
-	"github.com/stretchr/testify/assert"
-	"go.uber.org/zap"
-	"go.uber.org/zap/zapcore"
-	"os"
 	"strings"
 	"testing"
 	"time"
@@ -18,20 +14,7 @@ var fileLogger = &TimeFileLogger{
 }
 
 func TestSomething(t *testing.T) {
-	assert.True(t, true, "True is true!")
-}
 
-func TestMakeFile(t *testing.T) {
-	file := zapcore.AddSync(&TimeFileLogger{
-		PrefixFileName: "app-err-",
-		TimeFormat:     time.TimeOnly,
-	})
-	core := zapcore.NewTee(
-		zapcore.NewCore(zapcore.NewConsoleEncoder(zap.NewProductionEncoderConfig()), file, zap.InfoLevel),
-	)
-	logger := zap.New(core)
-	defer logger.Sync()
-	logger.Info("Hello from Zap!")
 }
 
 func TestTimeCheck(t *testing.T) {
@@ -85,10 +68,6 @@ func TestTimeDuration(t *testing.T) {
 }
 
 func TestLog(t *testing.T) {
-	logger := createLogger()
-	defer logger.Sync()
-	sugar := logger.Sugar()
-	//sugar.Infof("Hello from Zap!: %s", time.Now().Format("2006-01-02 15:04:05"))
 
 	processEndTime := time.Now().Add(30 * time.Second)
 
@@ -100,37 +79,6 @@ func TestLog(t *testing.T) {
 			defer func() {
 				<-goroutineLimit
 			}() // 고루틴 종료 후 채널에서 값 제거
-			sugar.Infof("Hello from Zap!: %s", time.Now().Format("2006-01-02 15:04:05"))
 		}()
 	}
-}
-
-func createLogger() *zap.Logger {
-	stdout := zapcore.AddSync(os.Stdout)
-	level := zap.NewAtomicLevelAt(zap.InfoLevel)
-	developmentCfg := zap.NewDevelopmentEncoderConfig()
-	developmentCfg.EncodeLevel = zapcore.CapitalColorLevelEncoder
-	consoleEncoder := zapcore.NewConsoleEncoder(developmentCfg)
-
-	core := zapcore.NewTee(
-		zapcore.NewCore(consoleEncoder, stdout, level),
-		newCoreFile(),
-	)
-
-	return zap.New(core)
-}
-
-func newCoreFile() zapcore.Core {
-	//file1, _ := os.OpenFile("example.txt", os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
-	file := zapcore.AddSync(&TimeFileLogger{
-		PrefixFileName:     "log/app-err-",
-		TimeFormat:         time.DateTime,
-		LogRetentionPeriod: 5 * time.Second,
-	})
-
-	productionCfg := zap.NewProductionEncoderConfig()
-	productionCfg.TimeKey = "timestamp"
-	productionCfg.EncodeTime = zapcore.ISO8601TimeEncoder
-
-	return zapcore.NewCore(zapcore.NewConsoleEncoder(productionCfg), file, zap.InfoLevel)
 }

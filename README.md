@@ -3,6 +3,8 @@
 I created this because it seemed like there was no option to generate log files by date when using the zap Logger.
 The usage is very simple, as shown below.
 
+The zap Logger library must be installed and in use. The explanation assumes that the installation has already been completed.
+
 ```go
 zapcore.AddSync(&rolling.TimeFileLogger{
     PrefixFileName:     "xxxx/you-log-file-name",
