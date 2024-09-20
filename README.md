@@ -5,6 +5,11 @@ The usage is very simple, as shown below.
 
 The zap Logger library must be installed and in use. The explanation assumes that the installation has already been completed.
 
+
+```
+go get github.com/kyungjoonkim/zap-time-file-logger@v1.0.0
+```
+
 ```go
 zapcore.AddSync(&rolling.TimeFileLogger{
     PrefixFileName:     "xxxx/you-log-file-name",

@@ -7,6 +7,11 @@ zap Logger를 라이브러리가 이이 받아져 있어야 하며 사용중이�
 
 사용법은 매우 간단하며 아래와 같습니다.
 
+```
+go get github.com/kyungjoonkim/zap-time-file-logger@v1.0.0
+```
+
+
 ```go
 zapcore.AddSync(&rolling.TimeFileLogger{
     PrefixFileName:     "xxxx/you-log-file-name",
