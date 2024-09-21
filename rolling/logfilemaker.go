@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"sync"
 	"time"
@@ -18,6 +19,7 @@ type TimeFileLogger struct {
 
 	writeMutex      sync.Mutex // writeMutex is used to lock the file for writing.
 	removeMutex     sync.Mutex // removeMutex is used to remove old log files.
+	checkPrefixName string     // checkPrefixName is considered as the file name changed if the name of PrefixFileName is different
 	file            *os.File   // file is the current log file.
 	currentFullName string     // currentFullName is the current log file name with full path. e.g., tmp/app-err-2024-09-16-0.log
 	dir             string     // dir is the directory of the log file.
@@ -47,14 +49,23 @@ const (
 )
 
 // Write implements the io.Writer interface.  It writes to the current logfile.
+// Parameters:
+//
+//	logData - The byte slice to write to the log file.
+//
+// Returns:
+//
+//	bytesWritten - The number of bytes written to the log file.
+//	err - An error if the write operation fails.
+//
 // Entry point
-func (f *TimeFileLogger) Write(p []byte) (n int, err error) {
+func (f *TimeFileLogger) Write(logData []byte) (bytesWritten int, err error) {
 	f.writeMutex.Lock()
 	defer f.writeMutex.Unlock()
 
 	curTime := time.Now()
 
-	logStatus, err := f.loggerFileStatus(curTime)
+	logStatus, err := f.loggerFileStatus(curTime, int64(len(logData)))
 	if err != nil {
 		return 0, err
 	}
@@ -68,37 +79,58 @@ func (f *TimeFileLogger) Write(p []byte) (n int, err error) {
 		go f.removeOldLogFiles()
 	}
 
-	return f.file.Write(p)
+	return f.file.Write(logData)
 }
 
 // timeFormat returns the time format for the log file name. if empty, it returns time.DateOnly
-func (f *TimeFileLogger) timeFormat() string {
-	if f.TimeFormat == "" {
-		f.TimeFormat = time.DateOnly
+func (f *TimeFileLogger) timeFormat() (timeFormat string, exist bool) {
+	timeFormat = strings.TrimSpace(f.TimeFormat)
+	if timeFormat != "" {
+		exist = true
 	}
-	return f.TimeFormat
+	return timeFormat, exist
 }
 
 // prefixFileName is the prefix of the log file name. e.g. : tmp/app-err- if empty, it returns defaultName
 func (f *TimeFileLogger) prefixFileName() string {
+	// checkPrefixName is considered as the file name changed if the name of PrefixFileName is different
+	if f.checkPrefixName != "" && f.PrefixFileName == f.checkPrefixName {
+		return f.PrefixFileName
+	}
+
 	if f.PrefixFileName == "" {
 		f.PrefixFileName = defaultName
 	}
 
-	if f.PrefixFileName[len(f.PrefixFileName)-1:] != hyphen {
-		f.PrefixFileName += hyphen
+	_, exist := f.timeFormat()
+	runes := []rune(f.PrefixFileName)
+	last := string(runes[len(runes)-1])
+
+	if exist {
+		if last != hyphen {
+			f.PrefixFileName += hyphen
+		}
+	} else {
+		if last == hyphen {
+			f.PrefixFileName = string(runes[:len(runes)-1])
+		}
 	}
+
+	f.checkPrefixName = f.PrefixFileName
 	return f.PrefixFileName
 }
 
 // loggerFileStatus returns the status of the log file.
-func (f *TimeFileLogger) loggerFileStatus(curTime time.Time) (status, error) {
+func (f *TimeFileLogger) loggerFileStatus(curTime time.Time, logDataSize int64) (status, error) {
 	//init file
 	if f.file == nil {
-		return InitFile, nil
+		// The reason for calling updateLogFileInfo when the type is InitFile is to check the size of the file if it is being appended to.
+		if err := f.updateLogFileInfo(InitFile, curTime); err != nil {
+			return 0, err
+		}
 	}
-	// check time change
-	if f.logFileTime.Format(f.timeFormat()) != curTime.Format(f.timeFormat()) {
+	// check time change DateFileName if timeFormat is existed
+	if timeFormat, exist := f.timeFormat(); exist && f.logFileTime.Format(timeFormat) != curTime.Format(timeFormat) {
 		return ChangeDateFile, nil
 	}
 
@@ -107,7 +139,7 @@ func (f *TimeFileLogger) loggerFileStatus(curTime time.Time) (status, error) {
 		return 0, err
 	}
 
-	if info.Size() >= f.max() {
+	if info.Size()+logDataSize > f.max() {
 		return ChangeIndexFile, nil
 	}
 
@@ -134,10 +166,12 @@ func (f *TimeFileLogger) updateLogFileInfo(logStatus status, curTime time.Time) 
 		f.fileIndex++
 	}
 
-	f.currentName = filepath.Base(f.prefixFileName()) +
-		f.logFileTime.Format(f.timeFormat()) +
-		fmt.Sprintf(indexFormat, f.fileIndex) +
-		ext
+	timeFormat, exist := f.timeFormat()
+	if exist {
+		timeFormat = f.logFileTime.Format(timeFormat)
+	}
+	//todo initFile type일 경우 파일 생성전에 마지막 index를 찾는 함수를 만들어야함
+	f.currentName = filepath.Base(f.prefixFileName()) + timeFormat + fmt.Sprintf(indexFormat, f.fileIndex) + ext
 	f.currentFullName = filepath.Join(f.dir, string(filepath.Separator), f.currentName)
 
 	_ = f.close()
@@ -181,28 +215,60 @@ func (f *TimeFileLogger) removeFileNames() []string {
 		return removeFilePaths
 	}
 
-	retentionTime := f.logFileTime.Add(-f.LogRetentionPeriod)
-
 	logFiles, err := filepath.Glob(filepath.Join(f.prefixFileName() + "*" + ext))
 	if err != nil {
 		fmt.Printf("Error globbing the path %v: %v\n", f.dir, err)
 		return removeFilePaths
 	}
 
+	retentionTime := f.logFileTime.Add(-f.LogRetentionPeriod)
+	timeFormat, _ := f.timeFormat()
 	for _, path := range logFiles {
+		// skip the current log file
 		if path == f.currentFullName {
 			continue
 		}
 
-		oldFileTime := f.extractTime(path, retentionTime.Location())
-		if oldFileTime.IsZero() || !oldFileTime.Before(retentionTime) {
-			continue
+		if f.isRemoveFile(path, timeFormat, retentionTime) {
+			removeFilePaths = append(removeFilePaths, path)
 		}
-
-		removeFilePaths = append(removeFilePaths, path)
 	}
 
 	return removeFilePaths
+}
+
+// isRemoveFile checks if the file should be removed based on the time format and retention time.
+func (f *TimeFileLogger) isRemoveFile(path string, timeFormat string, retentionTime time.Time) bool {
+	if timeFormat != "" {
+		oldFileTime := f.extractTime(path, timeFormat, retentionTime.Location())
+		if !oldFileTime.IsZero() && oldFileTime.Before(retentionTime) {
+			return true
+		}
+	} else if isValidFilename(path, f.prefixFileName()) {
+		if fileInfo, err := os.Stat(path); err == nil && fileInfo.ModTime().Before(retentionTime) {
+			return true
+		}
+	}
+
+	return false
+}
+
+func isValidFilename(filename, prefixName string) bool {
+	// Escape special regex characters in prefixName
+	escapedPrefix := regexp.QuoteMeta(prefixName)
+
+	// Construct the regex pattern
+	pattern := fmt.Sprintf(`^%s-\d+\.log$`, escapedPrefix)
+
+	// Compile the regex
+	regex, err := regexp.Compile(pattern)
+	if err != nil {
+		// Handle error (e.g., log it)
+		return false
+	}
+
+	// Test if the filename matches the pattern
+	return regex.MatchString(filename)
 }
 
 // Close implements io.Closer, and closes the current logfile.
@@ -223,7 +289,7 @@ func (f *TimeFileLogger) close() error {
 }
 
 // extractTime extracts the time from the log file name.
-func (f *TimeFileLogger) extractTime(totalFileName string, location *time.Location) time.Time {
+func (f *TimeFileLogger) extractTime(totalFileName string, timeFormat string, location *time.Location) time.Time {
 	var stringFormatTime string
 	var found bool
 
@@ -237,11 +303,11 @@ func (f *TimeFileLogger) extractTime(totalFileName string, location *time.Locati
 	}
 
 	// fileName HavCnt >  formatCnt  : extract time
-	if len(strings.Split(stringFormatTime, hyphen)) > len(strings.Split(f.timeFormat(), hyphen)) {
+	if len(strings.Split(stringFormatTime, hyphen)) > len(strings.Split(timeFormat, hyphen)) {
 		stringFormatTime = stringFormatTime[:strings.LastIndex(stringFormatTime, hyphen)]
 	}
 
-	extractTime, err := time.ParseInLocation(f.timeFormat(), stringFormatTime, location)
+	extractTime, err := time.ParseInLocation(timeFormat, stringFormatTime, location)
 	if err != nil {
 		return time.Time{}
 	}

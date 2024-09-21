@@ -2,6 +2,8 @@ package rolling
 
 import (
 	"fmt"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -37,7 +39,12 @@ func TestCutPrefix(t *testing.T) {
 	}
 
 	fmt.Println(after)
-	nowFormat := time.Now().Format(fileLogger.timeFormat())
+	timeFormat, existFormat := fileLogger.timeFormat()
+	if !existFormat {
+		return
+	}
+
+	nowFormat := time.Now().Format(timeFormat)
 	fmt.Println(nowFormat)
 
 	// 문자열을 time.Time 타입으로 변환
@@ -80,5 +87,65 @@ func TestLog(t *testing.T) {
 				<-goroutineLimit
 			}() // 고루틴 종료 후 채널에서 값 제거
 		}()
+	}
+}
+
+func TestTime(t *testing.T) {
+	root, err := FindProjectRoot("go.mod")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	logPath := filepath.Join(root, "log")
+	fmt.Println(logPath)
+	testFileLogger := &TimeFileLogger{
+		PrefixFileName: logPath + "/test-err",
+		//TimeFormat:         "2006-01-02",
+		LogRetentionPeriod: 24 * time.Hour,
+	}
+
+	write, err := testFileLogger.Write([]byte("test : " + time.Now().String() + "\n"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	fmt.Println(write)
+
+}
+
+func TestRoot(t *testing.T) {
+	root, err := FindProjectRoot("go.mod")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	fmt.Println(root)
+}
+
+// FindProjectRoot searches for a project root directory by looking for a specific file or directory
+// starting from the current directory and moving upwards.
+func FindProjectRoot(markerFile string) (string, error) {
+	// Start with the current working directory
+	dir, err := os.Getwd()
+	if err != nil {
+		return "", fmt.Errorf("failed to get current working directory: %w", err)
+	}
+
+	// Keep going up the directory tree until we find the marker file/directory
+	for {
+		// Check if the marker file/directory exists in the current directory
+		if _, err := os.Stat(filepath.Join(dir, markerFile)); err == nil {
+			return dir, nil
+		}
+
+		// Get the parent directory
+		parent := filepath.Dir(dir)
+
+		// If we're already at the root directory, we've gone too far
+		if parent == dir {
+			return "", fmt.Errorf("could not find project root: no directory containing %s found", markerFile)
+		}
+
+		// Move up to the parent directory
+		dir = parent
 	}
 }
