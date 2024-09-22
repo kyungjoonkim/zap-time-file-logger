@@ -112,6 +112,18 @@ func TestTime(t *testing.T) {
 
 }
 
+func TestTimeFormat(t *testing.T) {
+	ymdPattern := "204050504556767"
+	timeStr := time.Now().Format(ymdPattern)
+
+	tTime, err := time.Parse(ymdPattern, timeStr)
+	if err != nil {
+		fmt.Println(err)
+		return
+	}
+	fmt.Printf("time is zero : %t \n", tTime.IsZero())
+}
+
 func TestRoot(t *testing.T) {
 	root, err := FindProjectRoot("go.mod")
 	if err != nil {
