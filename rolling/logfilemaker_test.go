@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -160,4 +161,90 @@ func FindProjectRoot(markerFile string) (string, error) {
 		// Move up to the parent directory
 		dir = parent
 	}
+}
+
+func TestLogFileName1(t *testing.T) {
+	logger := &DateFileLogger{
+		PrefixFileName:     "log/app-err",
+		TimeFormat:         "2006-01-02",
+		LogRetentionPeriod: 24 * time.Hour,
+		MaxSize:            1,
+	}
+
+	curTime := time.Now()
+	if err := logger.checkInit(curTime); err != nil {
+
+	}
+
+	//wg := sync.WaitGroup{}
+	//logger.Write([]byte("test : " + time.Now().String() + "\n"))
+	//wg.Add(1)
+	//go func() {
+	//	defer wg.Done()
+	//	logger.saveBackupFile()
+	//}()
+	//wg.Wait()
+
+	logger.reNameOrRemoveOldFile(curTime)
+}
+
+func TestSaveNames(t *testing.T) {
+	logger := &DateFileLogger{
+		PrefixFileName:     "log/app-err",
+		TimeFormat:         "2006_01_02",
+		LogRetentionPeriod: 24 * time.Hour,
+		MaxSize:            1,
+	}
+
+	curTime := time.Now()
+	if err := logger.checkInit(curTime); err != nil {
+
+	}
+
+	names := []string{
+		//"app-err-0.log",
+		//"app-err-1.log",
+		//"app-err-2.log",
+		//"app-err-2024-09-16.log",
+		//"app-err-2024-09-16-1.log",
+		"app-err-2024_09_16.log",
+		"app-err-2024_09_16-1.log",
+		"app-err-2024_09_16.log.1727598347187",
+		//"app-err-2024-09-17.log",
+		//"app-err-2024-09-18.log",
+		//"app-err-2024-09-18-1.log",
+		//"app-err-2024-09-18-2.log",
+	}
+
+	for _, name := range names {
+		exist, val := logger.parseLogFile(name, logger.curDir()+name)
+		fmt.Printf("exist : %t, val : %v\n", exist, val)
+	}
+}
+
+func TestSplitNames(t *testing.T) {
+	names := []string{
+		"app-err-2024-09-16.log",
+		"app-err-2024-09-16-1.log",
+	}
+
+	for _, name := range names {
+		split := strings.Split(name, hyphen)
+		fmt.Printf("split : %v\n", split)
+	}
+}
+
+func TestPaseMill(t *testing.T) {
+	milliseconds, err := strconv.ParseInt("1727598347187", 10, 64)
+	if err != nil {
+		return
+	}
+	time2 := time.UnixMilli(milliseconds)
+	fmt.Println(time2)
+}
+
+func TestCheckStr(t *testing.T) {
+	str := "k"
+	fmt.Println(str[:1])
+
 }

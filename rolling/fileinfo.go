@@ -9,21 +9,19 @@ import (
 	"time"
 )
 
-type loggerFileInfo struct {
-	dir             string    // dir is the directory of the log file. e.g., tmp/
-	filePrefix      string    // filePrefix is the prefix of the log file name. e.g. : app-err-
-	timeFormat      string    // timeFormat is the time format for the log file name. e.g., 2006-01-02. Patterns defined in the time package should be used.
-	fullFileName    string    // fullFileName is the current log file name with full path. e.g., tmp/app-err-2024-09-16.log
-	fileName        string    // currentName is the current log file name. e.g., app-err-2024-09-16.log
-	fileIndex       int       // fileIndex is the index of the log file.
-	logFileTime     time.Time // logFileTime is the time of the created log file.
-	file            *os.File  // file is the current log file.
-	backupFileInfos []*backupFileInfo
-}
+const (
+	dot = "."
+)
 
-type backupFileInfo struct {
-	backupFileName string
-	logTIme        time.Time
+type loggerFileInfo struct {
+	dir          string    // dir is the directory of the log file. e.g., tmp/
+	filePrefix   string    // filePrefix is the prefix of the log file name. e.g. : app-err-
+	timeFormat   string    // timeFormat is the time format for the log file name. e.g., 2006-01-02. Patterns defined in the time package should be used.
+	fullFileName string    // fullFileName is the current log file name with full path. e.g., tmp/app-err-2024-09-16.log
+	fileName     string    // currentName is the current log file name. e.g., app-err-2024-09-16.log
+	fileIndex    int       // fileIndex is the index of the log file.
+	logFileTime  time.Time // logFileTime is the time of the created log file.
+	file         *os.File  // file is the current log file.
 }
 
 func (f *loggerFileInfo) isTimeFormat() bool {
@@ -42,55 +40,52 @@ func (f *loggerFileInfo) fileSize() (int64, error) {
 	return info.Size(), nil
 }
 
-func (f *loggerFileInfo) updateFileInfo(fileStatus status, curTime time.Time) error {
+func (f *loggerFileInfo) startFileChange(fileStatus status, curTime time.Time) error {
 	if fileStatus == ChangeDateFile {
-		return f.updateFileNameForDate(curTime)
+		return f.changeFileForDate(curTime)
 	}
 
 	if fileStatus == ChangeIndexFile {
-		return f.updateFileNameForIndex(curTime)
+		return f.changeFileForDateForIndex(curTime)
 	}
 	return nil
 }
 
-func (f *loggerFileInfo) updateFileNameForDate(curTime time.Time) (err error) {
-	f.fileName = makeFileName(f.filePrefix, makeFormatTime(curTime, f.timeFormat))
+func (f *loggerFileInfo) changeFileForDate(curTime time.Time) (err error) {
+	_, formatedTime := makeValidDateFormat(f.timeFormat, curTime)
+	f.fileName = makeFileName(f.filePrefix, formatedTime)
 	f.fullFileName = makeFullFileName(f.dir, f.fileName)
 	f.logFileTime = curTime
 	f.fileIndex = 0
 	return f.changeFile(curTime)
 }
 
-func (f *loggerFileInfo) updateFileNameForIndex(curTime time.Time) (err error) {
+func (f *loggerFileInfo) changeFileForDateForIndex(curTime time.Time) (err error) {
 	f.fileIndex++
 	return f.changeFile(curTime)
 }
 
 func (f *loggerFileInfo) changeFile(curTime time.Time) (err error) {
+	oldFileName := f.file.Name()
 	if err = f.closeFile(); err != nil {
 		return err
 	}
 
-	var backupFileName string
-	if backupFileName, err = f.reNameFile(curTime); err != nil {
+	if err = f.reNameFile(oldFileName, curTime); err != nil {
 		return err
 	}
 
-	f.backupFileInfos = append(f.backupFileInfos, &backupFileInfo{
-		backupFileName: backupFileName,
-		logTIme:        curTime,
-	})
-	f.file, err = openFile(f.fileName)
+	f.file, err = openFile(f.fullFileName)
 	return err
 }
 
-func (f *loggerFileInfo) reNameFile(curTime time.Time) (string, error) {
-	tempFileName := f.fullFileName + "." + strconv.FormatInt(curTime.UnixMilli(), 10)
-	err := os.Rename(f.fullFileName, tempFileName)
+func (f *loggerFileInfo) reNameFile(oldFileName string, curTime time.Time) error {
+	tempFileName := oldFileName + dot + strconv.FormatInt(curTime.UnixMilli(), 10)
+	err := os.Rename(oldFileName, tempFileName)
 	if err != nil {
-		return "", err
+		return err
 	}
-	return tempFileName, nil
+	return nil
 }
 
 func (f *loggerFileInfo) closeFile() error {
@@ -102,11 +97,6 @@ func (f *loggerFileInfo) closeFile() error {
 	return err
 }
 
-func validateTimeFormat(timeFormat string) bool {
-	targetTime, err := time.Parse(time.Now().Format(timeFormat), timeFormat)
-	return err == nil && !targetTime.IsZero()
-}
-
 func openFile(fullFileName string) (*os.File, error) {
 	if fullFileName == "" {
 		return nil, errors.New("file name is empty")
@@ -115,24 +105,26 @@ func openFile(fullFileName string) (*os.File, error) {
 }
 
 func makeFileName(filePrefix, formatedCurTime string) string {
-	return filePrefix + formatedCurTime + ext
+	if formatedCurTime == "" {
+		return filePrefix + ext
+	}
+	return filePrefix + hyphen + formatedCurTime + ext
 }
 
 func makeFullFileName(dir, fileName string) string {
 	return dir + string(filepath.Separator) + fileName
 }
 
-func makeTimeFormat(timeFormat string) string {
-	timeFormat = strings.TrimSpace(timeFormat)
-	if validateTimeFormat(timeFormat) {
-		return timeFormat
-	}
-	return ""
-}
+func makeValidDateFormat(format string, curTime time.Time) (string, string) {
+	format = strings.TrimSpace(format)
 
-func makeFormatTime(time time.Time, timeFormat string) string {
-	if timeFormat == "" {
-		return ""
+	if format != "" && strings.ContainsAny(format, "/") {
+		return "", ""
 	}
-	return time.Format(timeFormat)
+
+	formatedTime := curTime.Format(format)
+	if _, err := time.Parse(format, formatedTime); err != nil {
+		return "", ""
+	}
+	return format, formatedTime
 }

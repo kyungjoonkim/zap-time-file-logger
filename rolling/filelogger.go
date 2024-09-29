@@ -2,8 +2,11 @@ package rolling
 
 import (
 	"fmt"
+	"io/fs"
 	"os"
 	"path/filepath"
+	"sort"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -18,6 +21,14 @@ type DateFileLogger struct {
 	writeMutex sync.Mutex // writeMutex is used to lock the file for writing.
 	fileInfo   *loggerFileInfo
 	fileMutex  sync.Mutex
+}
+
+type paseFileInfo struct {
+	totalFileName string
+	fileName      string
+	formatTime    string
+	index         int
+	tempTime      time.Time
 }
 
 func (logger *DateFileLogger) Write(logData []byte) (bytesWritten int, err error) {
@@ -35,15 +46,16 @@ func (logger *DateFileLogger) Write(logData []byte) (bytesWritten int, err error
 	}
 
 	if logFileStatus != NotChangeFile {
-		err = logger.fileInfo.updateFileInfo(logFileStatus, curTime)
+		err = logger.fileInfo.startFileChange(logFileStatus, curTime)
 		if err != nil {
 			return 0, err
 		}
+
 		go func() {
 			logger.fileMutex.Lock()
 			defer logger.fileMutex.Unlock()
 			//todo: save backup file 작업 해야함
-			//logger.saveBackupFile(curTime)
+			logger.reNameOrRemoveOldFile(curTime)
 		}()
 
 	}
@@ -89,10 +101,8 @@ func (logger *DateFileLogger) makeLoggerInfo(curTime time.Time) error {
 	prefixName := strings.TrimSpace(logger.PrefixFileName)
 	dir := filepath.Dir(prefixName)
 	filePrefix := filepath.Base(prefixName)
-
-	timeFormat := makeTimeFormat(logger.TimeFormat)
-	formatedCurTime := makeFormatTime(curTime, timeFormat)
-	fileName := makeFileName(filePrefix, formatedCurTime)
+	format, formatedTime := makeValidDateFormat(logger.TimeFormat, curTime)
+	fileName := makeFileName(filePrefix, formatedTime)
 	fullFileName := makeFullFileName(dir, fileName)
 	logFileTime := curTime
 
@@ -108,7 +118,7 @@ func (logger *DateFileLogger) makeLoggerInfo(curTime time.Time) error {
 	logger.fileInfo = &loggerFileInfo{
 		dir:          dir,
 		filePrefix:   filePrefix,
-		timeFormat:   timeFormat,
+		timeFormat:   format,
 		fileName:     fileName,
 		fileIndex:    0,
 		fullFileName: fullFileName,
@@ -118,31 +128,251 @@ func (logger *DateFileLogger) makeLoggerInfo(curTime time.Time) error {
 	return nil
 }
 
-//func (logger *DateFileLogger) saveBackupFile(curTime time.Time) {
-//	backupFileInfos := logger.fileInfo.backupFileInfos
-//	if len(backupFileInfos) == 0 {
-//		return
+func (logger *DateFileLogger) reNameOrRemoveOldFile(curTime time.Time) {
+
+	backupFiles := make(map[string][]*paseFileInfo)
+	err := filepath.WalkDir(logger.curDir(), func(path string, d fs.DirEntry, err error) error {
+		if d.IsDir() || logger.curFileName() == d.Name() {
+			return nil
+		}
+
+		if isLogFile, fileInfo := logger.parseLogFile(d.Name(), path); isLogFile {
+			parseFileInfos := backupFiles[fileInfo.fileName]
+			parseFileInfos = append(parseFileInfos, fileInfo)
+			backupFiles[fileInfo.fileName] = parseFileInfos
+		}
+
+		return nil
+	})
+
+	if err != nil {
+		fmt.Printf("Error globbing the path %v: %v\n", logger.fileInfo.dir, err)
+		return
+	}
+
+	for fileName, fileInfos := range backupFiles {
+		if logger.canRemovalFile() {
+			isRemove := false
+			for _, info := range fileInfos {
+
+				if logger.isRemoveFile(curTime, info.formatTime) {
+					removeErr := os.Remove(info.totalFileName)
+					if removeErr != nil {
+						fmt.Printf("Error removing old log file %v: %v\n", info.totalFileName, removeErr)
+					}
+					isRemove = true
+				}
+			}
+			if isRemove {
+				break
+			}
+		}
+
+		//fileInfos[0].
+		indexMax := 0
+		for _, info := range fileInfos {
+			if info.index > indexMax {
+				indexMax = info.index
+			}
+		}
+
+		reNameFileInfos := make([]*paseFileInfo, 0)
+		for _, info := range fileInfos {
+			if info.tempTime.IsZero() {
+				continue
+			}
+			reNameFileInfos = append(reNameFileInfos, info)
+		}
+
+		sort.Slice(reNameFileInfos, func(i, j int) bool {
+			return reNameFileInfos[i].tempTime.Before(reNameFileInfos[j].tempTime)
+		})
+
+		for _, info := range reNameFileInfos {
+			indexMax++
+			targetFileName := logger.curDir() + fileName + hyphen + strconv.Itoa(indexMax) + ext
+			err = os.Rename(info.totalFileName, targetFileName)
+			for err != nil {
+				indexMax++
+				targetFileName = fileName + hyphen + strconv.Itoa(indexMax) + ext
+				err = os.Rename(info.totalFileName, targetFileName)
+			}
+		}
+
+	}
+
+	fmt.Println(backupFiles)
+}
+
+func (logger *DateFileLogger) isRemoveFile(curTime time.Time, formatedTime string) bool {
+	if !logger.canRemovalFile() || formatedTime == "" {
+		return false
+	}
+
+	lastTime := curTime.Add(-logger.LogRetentionPeriod)
+	extractTime, err := time.ParseInLocation(logger.fileInfo.timeFormat, formatedTime, curTime.Location())
+	if err != nil {
+		return false
+	}
+	return lastTime.After(extractTime)
+}
+
+func (logger *DateFileLogger) canRemovalFile() bool {
+	return logger.LogRetentionPeriod > 0
+}
+func (logger *DateFileLogger) curDir() string {
+	return logger.fileInfo.dir + string(filepath.Separator)
+}
+
+func (logger *DateFileLogger) curFileName() string {
+	return logger.fileInfo.fileName
+}
+
+func (logger *DateFileLogger) parseLogFile(fileName string, path string) (bool, *paseFileInfo) {
+	cutName, find := strings.CutPrefix(fileName, logger.fileInfo.filePrefix)
+	if !find {
+		return false, nil
+	}
+
+	// 0 : timeFormat-index,1 : ext
+	splitFormatNames := strings.Split(cutName, ext)
+	if len(splitFormatNames) < 2 {
+		return false, nil
+	}
+
+	strMillTime := splitFormatNames[1]
+	var tempTime time.Time
+	if strMillTime != "" {
+		strMillTime = strings.TrimPrefix(strMillTime, dot)
+		milliseconds, err := strconv.ParseInt(strMillTime, 10, 64)
+		if err != nil {
+			return false, nil
+		}
+		tempTime = time.UnixMilli(milliseconds)
+	}
+
+	if len(logger.fileInfo.timeFormat) == 0 {
+		indexVal := splitFormatNames[0]
+		if len(indexVal) == 0 {
+			return true, &paseFileInfo{
+				totalFileName: path,
+				fileName:      logger.fileInfo.filePrefix,
+				tempTime:      tempTime,
+			}
+		}
+
+		indexes := strings.Split(indexVal, hyphen)
+		if len(indexes) != 2 {
+			return false, nil
+		}
+
+		index, err := strconv.ParseInt(indexes[1], 10, 32)
+		if err != nil {
+			return false, nil
+		}
+		return true, &paseFileInfo{
+			totalFileName: path,
+			fileName:      logger.fileInfo.filePrefix,
+			index:         int(index),
+			tempTime:      tempTime,
+		}
+	} else {
+		if splitFormatNames[0] == "" || len(splitFormatNames[0]) < 1 {
+			return false, nil
+		}
+
+		timeAndIndex := splitFormatNames[0][1:]
+		formatHyphenCnt := strings.Split(logger.fileInfo.timeFormat, hyphen)
+		targetNameHyphenCnt := strings.Split(timeAndIndex, hyphen)
+
+		if len(formatHyphenCnt) == len(targetNameHyphenCnt) {
+			_, err := time.Parse(logger.fileInfo.timeFormat, timeAndIndex)
+			if err != nil {
+				return false, nil
+			}
+
+			return true, &paseFileInfo{
+				totalFileName: path,
+				fileName:      logger.fileInfo.filePrefix + hyphen + timeAndIndex,
+				formatTime:    timeAndIndex,
+				tempTime:      tempTime,
+			}
+		} else if len(formatHyphenCnt) < len(targetNameHyphenCnt) {
+			targetTime := strings.Join(targetNameHyphenCnt[:len(targetNameHyphenCnt)-1], hyphen)
+			_, err := time.Parse(logger.fileInfo.timeFormat, targetTime)
+			if err != nil {
+				return false, nil
+			}
+
+			strIndex := strings.Join(targetNameHyphenCnt[len(targetNameHyphenCnt)-1:], "")
+			index, err := strconv.ParseInt(strIndex, 10, 32)
+			if err != nil {
+				return false, nil
+			}
+
+			return true, &paseFileInfo{
+				totalFileName: path,
+				fileName:      logger.fileInfo.filePrefix + hyphen + timeAndIndex,
+				formatTime:    targetTime,
+				index:         int(index),
+				tempTime:      tempTime,
+			}
+		} else {
+			return false, nil
+		}
+
+	}
+}
+
+//func (logger *DateFileLogger) prefixAndTime(fileName string) string {
+//	cutName, find := strings.CutPrefix(fileName, logger.fileInfo.filePrefix)
+//	if !find {
+//		return ""
 //	}
 //
-//	sort.Slice(backupFileInfos, func(i, j int) bool {
-//		return backupFileInfos[i].logTIme.Before(backupFileInfos[j].logTIme)
-//	})
-//
-//	for _, info := range backupFileInfos {
-//		backupPrefix, found := strings.CutSuffix(info.backupFileName, ext)
-//		if !found {
-//			continue
-//		}
-//
-//		err := logger.processBackupFile(backupPrefix)
-//		if err != nil {
-//			fmt.Printf("Error globbing the path %v: %v\n", logger.fileInfo.dir, err)
-//			continue
-//		}
+//	suffixSplit := strings.Split(cutName, ext)
+//	if len(suffixSplit) < 2 {
+//		return ""
 //	}
 //
+//	if logger.fileInfo.timeFormat == "" {
+//
+//	}
+//
+//	//dateSize := strings.Split(logger.fileInfo.timeFormat, hyphen)
+//	//cutNameSize := strings.Split(cutName, hyphen)
+//	//if dateSize == cutNameSize {
+//	//
+//	//}
+//
+//	//filePreFix := logger.fileInfo.filePrefix
+//
+//	return cutName
 //}
+
+//func (logger *DateFileLogger) tempLogFile(fileName string) bool {
+//	noPrefixLogName, find := strings.CutPrefix(logger.fileInfo.filePrefix, fileName)
+//	if !find {
+//		return false
+//	}
 //
+//	tempTime, findTemp := strings.CutPrefix(fileName, ext)
+//	if !findTemp {
+//		return false
+//	}
+//
+//	logTime, find := strings.CutSuffix(noPrefixLogName, ext)
+//	if !find {
+//		return false
+//	}
+//
+//	if len(logTime) > 0 || len(logger.fileInfo.timeFormat) > 0 {
+//
+//	}
+//
+//	return strings.CutPrefix(logger.fileInfo.filePrefix, fileName)
+//}
+
 //func (logger *DateFileLogger) processBackupFile(backupPrefix string) error {
 //	logFiles, err := filepath.Glob(filepath.Join(backupPrefix + "-*" + ext))
 //	if err != nil {
