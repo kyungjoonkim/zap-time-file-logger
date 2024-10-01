@@ -2,3 +2,4 @@
 /.idea
 /log
 main.go
+/rolling/log

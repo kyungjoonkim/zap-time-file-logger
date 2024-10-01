@@ -5,79 +5,13 @@ import (
 	"os"
 	"path/filepath"
 	"strconv"
-	"strings"
 	"testing"
 	"time"
 )
 
-var fileLogger = &TimeFileLogger{
-	PrefixFileName:     "/tmp/app-err-",
-	TimeFormat:         "2006-01-02",
-	LogRetentionPeriod: 24 * time.Hour,
-}
-
-func TestSomething(t *testing.T) {
-
-}
-
-func TestTimeCheck(t *testing.T) {
-	old := time.Now().Add(-fileLogger.LogRetentionPeriod)
-	fmt.Println(old.Format(fileLogger.TimeFormat))
-
-	//assert.Equal(t, time.DateOnly, fileLogger.timeFormat())
-}
-
-func TestCutPrefix(t *testing.T) {
-	after, found := strings.CutPrefix("/tmp/app-err-2024-09-16.log", fileLogger.prefixFileName())
-	if !found {
-		fmt.Println(after)
-		return
-	}
-	after, found = strings.CutSuffix(after, ext)
-	if !found {
-		fmt.Println(after)
-		return
-	}
-
-	fmt.Println(after)
-	timeFormat, existFormat := fileLogger.timeFormat()
-	if !existFormat {
-		return
-	}
-
-	nowFormat := time.Now().Format(timeFormat)
-	fmt.Println(nowFormat)
-
-	// 문자열을 time.Time 타입으로 변환
-	parseTime, err := time.Parse(time.DateOnly, nowFormat)
-	if err != nil {
-		fmt.Println("Error parsing time:", err)
-		return
-	}
-
-	fmt.Println("Parsed time:", parseTime)
-
-}
-
-func TestTimeDuration(t *testing.T) {
-	logger := &TimeFileLogger{
-		PrefixFileName:     "log/app-err-",
-		TimeFormat:         "2006-01-02",
-		LogRetentionPeriod: 24 * time.Hour,
-	}
-
-	_ = logger.updateLogFileInfo(InitFile, time.Now())
-
-	names := logger.removeFileNames()
-	for _, name := range names {
-		fmt.Println(name)
-	}
-
-}
-
 func TestLog(t *testing.T) {
 
-	processEndTime := time.Now().Add(30 * time.Second)
+	processEndTime := time.Now().Add(1 * time.Second)
 
 	goroutineLimit := make(chan struct{}, 10) // 최대 100개의 고루틴만 동시에 실행
 	for processEndTime.After(time.Now()) {
@@ -89,28 +23,6 @@ func TestLog(t *testing.T) {
 			}() // 고루틴 종료 후 채널에서 값 제거
 		}()
 	}
-}
-
-func TestTime(t *testing.T) {
-	root, err := FindProjectRoot("go.mod")
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	logPath := filepath.Join(root, "log")
-	fmt.Println(logPath)
-	testFileLogger := &TimeFileLogger{
-		PrefixFileName: logPath + "/test-err",
-		//TimeFormat:         "2006-01-02",
-		LogRetentionPeriod: 24 * time.Hour,
-	}
-
-	write, err := testFileLogger.Write([]byte("test : " + time.Now().String() + "\n"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	fmt.Println(write)
-
 }
 
 func TestTimeFormat(t *testing.T) {
@@ -177,7 +89,7 @@ func TestLogFileName1(t *testing.T) {
 	}
 
 	//wg := sync.WaitGroup{}
-	//logger.Write([]byte("test : " + time.Now().String() + "\n"))
+	logger.Write([]byte("test : " + time.Now().String() + "\n"))
 	//wg.Add(1)
 	//go func() {
 	//	defer wg.Done()
@@ -185,13 +97,13 @@ func TestLogFileName1(t *testing.T) {
 	//}()
 	//wg.Wait()
 
-	logger.reNameOrRemoveOldFile(curTime)
+	//logger.reNameOrRemoveOldFile(curTime)
 }
 
 func TestSaveNames(t *testing.T) {
 	logger := &DateFileLogger{
 		PrefixFileName:     "log/app-err",
-		TimeFormat:         "2006_01_02",
+		TimeFormat:         "2006-01-02",
 		LogRetentionPeriod: 24 * time.Hour,
 		MaxSize:            1,
 	}
@@ -202,14 +114,11 @@ func TestSaveNames(t *testing.T) {
 	}
 
 	names := []string{
-		//"app-err-0.log",
+		//"app-err.log",
 		//"app-err-1.log",
 		//"app-err-2.log",
-		//"app-err-2024-09-16.log",
-		//"app-err-2024-09-16-1.log",
-		"app-err-2024_09_16.log",
-		"app-err-2024_09_16-1.log",
-		"app-err-2024_09_16.log.1727598347187",
+		"app-err-2024-09-16.log",
+		"app-err-2024-09-16-1.log",
 		//"app-err-2024-09-17.log",
 		//"app-err-2024-09-18.log",
 		//"app-err-2024-09-18-1.log",
@@ -217,21 +126,22 @@ func TestSaveNames(t *testing.T) {
 	}
 
 	for _, name := range names {
-		exist, val := logger.parseLogFile(name, logger.curDir()+name)
+		exist, val := logger.oldLogFileInfo(name, logger.curDir()+name, curTime.Location())
 		fmt.Printf("exist : %t, val : %v\n", exist, val)
 	}
 }
 
-func TestSplitNames(t *testing.T) {
-	names := []string{
-		"app-err-2024-09-16.log",
-		"app-err-2024-09-16-1.log",
+func TestRenameCheck(t *testing.T) {
+	logger := &DateFileLogger{
+		PrefixFileName:     "log/app-err",
+		TimeFormat:         "2006-01-02",
+		LogRetentionPeriod: 24 * time.Hour,
+		MaxSize:            1,
 	}
+	now := time.Now()
+	logger.checkInit(now)
+	logger.reNameOrRemoveOldFile(now)
 
-	for _, name := range names {
-		split := strings.Split(name, hyphen)
-		fmt.Printf("split : %v\n", split)
-	}
 }
 
 func TestPaseMill(t *testing.T) {
@@ -244,7 +154,15 @@ func TestPaseMill(t *testing.T) {
 }
 
 func TestCheckStr(t *testing.T) {
-	str := "k"
-	fmt.Println(str[:1])
+	logger := &DateFileLogger{
+		PrefixFileName:     "log/app-err",
+		TimeFormat:         "",
+		LogRetentionPeriod: 24 * time.Hour,
+		MaxSize:            1,
+	}
+
+	logger.fileInfo = &loggerFileInfo{
+		timeFormat: "2006",
+	}
 
 }

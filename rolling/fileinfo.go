@@ -2,6 +2,7 @@ package rolling
 
 import (
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -68,15 +69,18 @@ func (f *loggerFileInfo) changeFileForDateForIndex(curTime time.Time) (err error
 func (f *loggerFileInfo) changeFile(curTime time.Time) (err error) {
 	oldFileName := f.file.Name()
 	if err = f.closeFile(); err != nil {
-		return err
+		return fmt.Errorf("failed to close file: %w", err)
 	}
 
 	if err = f.reNameFile(oldFileName, curTime); err != nil {
-		return err
+		return fmt.Errorf("failed to rename file: %w", err)
 	}
 
 	f.file, err = openFile(f.fullFileName)
-	return err
+	if err != nil {
+		return fmt.Errorf("failed to open new file: %w", err)
+	}
+	return nil
 }
 
 func (f *loggerFileInfo) reNameFile(oldFileName string, curTime time.Time) error {
