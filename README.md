@@ -7,11 +7,11 @@ The zap Logger library must be installed and in use. The explanation assumes tha
 
 
 ```
-go get github.com/kyungjoonkim/zap-time-file-logger@v1.0.0
+go get github.com/kyungjoonkim/zap-time-file-logger@v1.0.3
 ```
 
 ```go
-zapcore.AddSync(&rolling.TimeFileLogger{
+zapcore.AddSync(&rolling.DateFileLogger{
     PrefixFileName:     "xxxx/you-log-file-name",
     TimeFormat:         "2006-01-02",
     LogRetentionPeriod: 10 * 24 * time.Hour,
