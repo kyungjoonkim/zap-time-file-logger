@@ -28,8 +28,7 @@ type status int
 
 // Enum Values of Log File Status
 const (
-	InitFile        status = iota // InitFile is created new Log File
-	NotChangeFile                 // NotChangeFile is not changed Log File
+	NotChangeFile   status = iota // NotChangeFile is not changed Log File
 	ChangeDateFile                // ChangeDateFile is changed Date Log File
 	ChangeIndexFile               // ChangeIndexFile is changed Index Log File
 )
@@ -60,8 +59,7 @@ func (logger *DateFileLogger) Write(logData []byte) (bytesWritten int, err error
 	}
 
 	if logFileStatus != NotChangeFile {
-		err = logger.fileInfo.startFileChange(logFileStatus, curTime)
-		if err != nil {
+		if err = logger.fileInfo.startFileChange(logFileStatus, curTime); err != nil {
 			return 0, fmt.Errorf("file change error: %w", err)
 		}
 
@@ -112,8 +110,15 @@ func (logger *DateFileLogger) max() int64 {
 
 func (logger *DateFileLogger) makeLoggerInfo(curTime time.Time) error {
 	prefixName := strings.TrimSpace(logger.PrefixFileName)
+	if prefixName == "" {
+		prefixName = defaultName
+	}
+
 	dir := filepath.Dir(prefixName)
 	filePrefix := filepath.Base(prefixName)
+	if filePrefix == "" {
+		filePrefix = defaultName
+	}
 	format, formatedTime := makeValidDateFormat(logger.TimeFormat, curTime)
 	fileName := makeFileName(filePrefix, formatedTime)
 	fullFileName := makeFullFileName(dir, fileName)
@@ -143,16 +148,16 @@ func (logger *DateFileLogger) makeLoggerInfo(curTime time.Time) error {
 
 func (logger *DateFileLogger) reNameOrRemoveOldFile(curTime time.Time) {
 
-	backupFiles := make(map[string][]*oldLogFileInfo)
+	oldBackupFiles := make(map[string][]*oldLogFileInfo)
 	err := filepath.WalkDir(logger.curDir(), func(path string, d fs.DirEntry, err error) error {
 		if d.IsDir() || logger.curFileName() == d.Name() {
 			return nil
 		}
 
 		if isLogFile, fileInfo := logger.oldLogFileInfo(d.Name(), path, curTime.Location()); isLogFile {
-			parseFileInfos := backupFiles[fileInfo.fileName]
+			parseFileInfos := oldBackupFiles[fileInfo.fileName]
 			parseFileInfos = append(parseFileInfos, fileInfo)
-			backupFiles[fileInfo.fileName] = parseFileInfos
+			oldBackupFiles[fileInfo.fileName] = parseFileInfos
 		}
 
 		return nil
@@ -164,7 +169,7 @@ func (logger *DateFileLogger) reNameOrRemoveOldFile(curTime time.Time) {
 	}
 
 	removeFileInfo := make([]*oldLogFileInfo, 0)
-	for _, fileInfos := range backupFiles {
+	for _, fileInfos := range oldBackupFiles {
 		if fileInfos[0].isRemoveLogFile(curTime, logger.LogRetentionPeriod, logger.fileInfo.timeFormat) {
 			for _, info := range fileInfos {
 				removeFileInfo = append(removeFileInfo, info)
@@ -184,12 +189,12 @@ func (logger *DateFileLogger) reNameOrRemoveOldFile(curTime time.Time) {
 			continue
 		}
 
-		maxIndexFileInfo := slices.MaxFunc(fileInfos, func(a, b *oldLogFileInfo) int {
-			return cmp.Compare(a.index, b.index)
-		})
-
 		sort.Slice(reNameFileInfos, func(i, j int) bool {
 			return reNameFileInfos[i].tempTime.Before(reNameFileInfos[j].tempTime)
+		})
+
+		maxIndexFileInfo := slices.MaxFunc(fileInfos, func(a, b *oldLogFileInfo) int {
+			return cmp.Compare(a.index, b.index)
 		})
 
 		logger.renameTempFiles(reNameFileInfos, maxIndexFileInfo.index)

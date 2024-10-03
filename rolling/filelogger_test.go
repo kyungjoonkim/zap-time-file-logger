@@ -166,3 +166,32 @@ func TestCheckStr(t *testing.T) {
 	}
 
 }
+
+func TestLogWrite(t *testing.T) {
+	root, err := FindProjectRoot("go.mod")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	logger := &DateFileLogger{
+		PrefixFileName:     root + "/log/app-err",
+		TimeFormat:         "2006-01-02-15-04",
+		LogRetentionPeriod: 5 * time.Minute,
+		MaxSize:            1,
+	}
+
+	processEndTime := time.Now().Add(10 * time.Second)
+	goroutineLimit := make(chan struct{}, 10) // 최대 100개의 고루틴만 동시에 실행
+	for processEndTime.After(time.Now()) {
+
+		goroutineLimit <- struct{}{} // 고루틴 실행 전 채널에 값 추가
+		go func() {
+			defer func() {
+				<-goroutineLimit
+			}() // 고루틴 종료 후 채널에서 값 제거
+			time.Sleep(1 * time.Second)
+			logger.Write([]byte("test HI,Hi,Hi,Hi : " + time.Now().String() + "\n"))
+		}()
+	}
+
+}

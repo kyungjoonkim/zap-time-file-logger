@@ -42,30 +42,22 @@ func (f *loggerFileInfo) fileSize() (int64, error) {
 }
 
 func (f *loggerFileInfo) startFileChange(fileStatus status, curTime time.Time) error {
-	if fileStatus == ChangeDateFile {
-		return f.changeFileForDate(curTime)
+	if fileStatus == NotChangeFile {
+		return nil
 	}
 
-	if fileStatus == ChangeIndexFile {
-		return f.changeFileForDateForIndex(curTime)
+	if fileStatus == ChangeDateFile {
+		f.updateFileInfo(curTime)
 	}
-	return nil
+	return f.changeFile(curTime)
 }
 
-func (f *loggerFileInfo) changeFileForDate(curTime time.Time) (err error) {
+func (f *loggerFileInfo) updateFileInfo(curTime time.Time) {
 	_, formatedTime := makeValidDateFormat(f.timeFormat, curTime)
 	f.fileName = makeFileName(f.filePrefix, formatedTime)
 	f.fullFileName = makeFullFileName(f.dir, f.fileName)
 	f.logFileTime = curTime
-	f.fileIndex = 0
-	return f.changeFile(curTime)
 }
-
-func (f *loggerFileInfo) changeFileForDateForIndex(curTime time.Time) (err error) {
-	f.fileIndex++
-	return f.changeFile(curTime)
-}
-
 func (f *loggerFileInfo) changeFile(curTime time.Time) (err error) {
 	oldFileName := f.file.Name()
 	if err = f.closeFile(); err != nil {
